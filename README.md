@@ -110,8 +110,8 @@ The application should now be running with the frontend available on `http://loc
 
 ## License
 
-The project is proprietary (not open source).
+The project is open source, licensed under the MIT License.
 
 ```
-Copyright (c) 2024.
+Copyright (c) 2025.
 ```
