@@ -65,9 +65,12 @@ export function Settings() {
   useEffect(() => {
     const checkGAStatus = async () => {
       try {
+        console.log('Checking Google Analytics connection status');
         const status = await getGoogleAuthStatus();
+        console.log('Successfully retrieved Google Analytics connection status');
         setIsGAConnected(status.connected);
       } catch (error) {
+        console.error('Error checking Google Analytics connection status:', error);
         toast({
           variant: "destructive",
           title: "Error",
@@ -419,8 +422,39 @@ export function Settings() {
                   <Button
                     onClick={async () => {
                       try {
-                        const response = await api.get('/api/auth/google');
-                        window.open(response.data.url, '_blank');
+                        // Create the frontend callback URL
+                        const frontendCallback = `${window.location.origin}/auth/google/callback`;
+
+                        // Open popup window first with a loading page
+                        const width = 600;
+                        const height = 700;
+                        const left = window.innerWidth / 2 - width / 2;
+                        const top = window.innerHeight / 2 - height / 2;
+
+                        const popup = window.open(
+                          'about:blank',
+                          'googleAuthPopup',
+                          `width=${width},height=${height},top=${top},left=${left},toolbar=0,location=0,menubar=0,status=0`
+                        );
+
+                        // Show loading state in popup
+                        if (popup) {
+                          popup.document.write('<html><body><h3>Loading Google authentication...</h3></body></html>');
+                        }
+
+                        // Request the auth URL with our frontend callback as the redirect_uri
+                        const response = await api.get(`/api/auth/google?redirect_uri=${encodeURIComponent(frontendCallback)}`);
+
+                        // Redirect the popup to the Google auth URL
+                        if (popup) {
+                          popup.location.href = response.data.url;
+                        } else {
+                          toast({
+                            variant: "destructive",
+                            title: "Error",
+                            description: "Failed to open popup window for authentication"
+                          });
+                        }
                       } catch (error) {
                         toast({
                           variant: "destructive",

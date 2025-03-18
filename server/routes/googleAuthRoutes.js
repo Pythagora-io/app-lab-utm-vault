@@ -1,20 +1,51 @@
 const express = require('express');
 const router = express.Router();
-const { oauth2Client } = require('../config/googleAnalytics');
+const { oauth2Client, getOAuth2Client } = require('../config/googleAnalytics');
 const GoogleToken = require('../models/GoogleToken');
 const { requireUser } = require('./middleware/auth');
+
+// Store user IDs temporarily for OAuth flow
+const pendingAuthUsers = new Map();
 
 router.get('/auth/google', requireUser, (req, res) => {
   console.log('Initiating Google OAuth flow for user:', req.user.id);
   try {
-    // Store userId in session before redirect
-    req.session.oauthUserId = req.user.id;
+    // Get redirect_uri from query params if provided
+    const redirectUri = req.query.redirect_uri || null;
+    console.log('Requested redirect URI:', redirectUri);
 
-    const url = oauth2Client.generateAuthUrl({
+    // Create a unique state parameter to identify this auth request
+    const state = Math.random().toString(36).substring(2, 15);
+
+    // Store user ID with state parameter (expires in 10 minutes)
+    pendingAuthUsers.set(state, {
+      userId: req.user.id,
+      timestamp: Date.now(),
+      redirectUri
+    });
+
+    // Clean up old entries
+    const tenMinutesAgo = Date.now() - 10 * 60 * 1000;
+    for (const [key, value] of pendingAuthUsers.entries()) {
+      if (value.timestamp < tenMinutesAgo) {
+        pendingAuthUsers.delete(key);
+      }
+    }
+
+    console.log('Stored user ID with state:', state);
+
+    // Use the oauth client with the correct redirect URI
+    const oauthClient = redirectUri ? getOAuth2Client(redirectUri) : oauth2Client;
+
+    // Generate auth URL with state parameter
+    const url = oauthClient.generateAuthUrl({
       access_type: 'offline',
       scope: ['https://www.googleapis.com/auth/analytics.readonly'],
-      prompt: 'consent'
+      prompt: 'consent',
+      state: state
     });
+
+    console.log('Generated auth URL:', url);
     res.json({ url });
   } catch (error) {
     console.error('Error generating auth URL:', error);
@@ -22,20 +53,55 @@ router.get('/auth/google', requireUser, (req, res) => {
   }
 });
 
-// Update the callback handler to work with proxied requests
 router.get('/auth/google/callback', async (req, res) => {
-  const { code } = req.query;
+  const { code, state, redirect_uri } = req.query;
   console.log('Received Google OAuth callback with code');
+  console.log('State from callback:', state);
+  console.log('Redirect URI from request:', redirect_uri);
 
   try {
-    // Get userId from session
-    const userId = req.session.oauthUserId;
+    // Get userId from pending auth map using state
+    let userId = null;
+    let customRedirectUri = null;
+
+    if (state && pendingAuthUsers.has(state)) {
+      const authData = pendingAuthUsers.get(state);
+      userId = authData.userId;
+      customRedirectUri = authData.redirectUri;
+      pendingAuthUsers.delete(state); // Clean up
+      console.log('Retrieved user ID from state:', userId);
+    } else if (req.session && req.session.oauthUserId) {
+      // Fallback to session if available
+      userId = req.session.oauthUserId;
+      console.log('Retrieved user ID from session:', userId);
+      delete req.session.oauthUserId;
+    } else if (state) {
+      // If state is provided but not found, it might have been consumed already
+      console.log('State provided but not found in pendingAuthUsers map. It might have been consumed already.');
+
+      // Check if we have a Google token for any user
+      const tokens = await GoogleToken.find();
+      if (tokens.length > 0) {
+        // If we have tokens, the authentication was likely successful in another window
+        return res.json({
+          success: true,
+          message: 'Authentication already processed in another window'
+        });
+      }
+    }
+
     if (!userId) {
       throw new Error('Authentication session expired');
     }
-    console.log('Retrieved user ID from session:', userId);
 
-    const { tokens } = await oauth2Client.getToken(code);
+    // Use the correct redirect URI
+    const finalRedirectUri = redirect_uri || customRedirectUri;
+    console.log('Using redirect URI:', finalRedirectUri);
+
+    // Get an OAuth client with the appropriate redirect URI
+    const oauthClient = finalRedirectUri ? getOAuth2Client(finalRedirectUri) : oauth2Client;
+
+    const { tokens } = await oauthClient.getToken(code);
     console.log('New OAuth2 tokens received');
 
     if (tokens.refresh_token) {
@@ -50,45 +116,33 @@ router.get('/auth/google/callback', async (req, res) => {
       );
     }
 
-    // Clean up the session variable
-    delete req.session.oauthUserId;
-
-    // Store access token in session
+    // Store access token in session if available
     if (req.session) {
       console.log('Storing access token in session');
       req.session.googleAccessToken = tokens.access_token;
       req.session.googleTokenExpiry = tokens.expiry_date;
+
+      // Save the session explicitly
+      await new Promise((resolve, reject) => {
+        req.session.save((err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
     }
 
     // Set credentials for current request
-    oauth2Client.setCredentials(tokens);
+    oauthClient.setCredentials(tokens);
     console.log('Set credentials in oauth2Client');
 
-    res.send(`
-      <html>
-        <body>
-          <script>
-            window.opener.postMessage({ type: 'GOOGLE_AUTH_SUCCESS' }, '*');
-            window.close();
-          </script>
-        </body>
-      </html>
-    `);
+    // Return JSON response
+    res.json({ success: true });
   } catch (error) {
     console.error('Error in Google OAuth callback:', error);
-    res.status(500).send(`
-      <html>
-        <body>
-          <script>
-            window.opener.postMessage({
-              type: 'GOOGLE_AUTH_ERROR',
-              error: '${encodeURIComponent(error.message)}'
-            }, '*');
-            window.close();
-          </script>
-        </body>
-      </html>
-    `);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Authentication failed'
+    });
   }
 });
 

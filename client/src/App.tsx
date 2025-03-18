@@ -13,6 +13,7 @@ import { Settings } from "./pages/Settings"
 import { Guidelines } from "./pages/Guidelines"
 import Analytics from './pages/Analytics'
 import { Organization } from "@/pages/Organization"
+import { GoogleCallback } from "@/pages/GoogleCallback"
 
 function App() {
   return (
@@ -22,6 +23,7 @@ function App() {
             <Routes>
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
+              <Route path="/auth/google/callback" element={<GoogleCallback />} />
               <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
                 <Route index element={<Dashboard />} />
                 <Route path="links" element={<Links />} />

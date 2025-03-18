@@ -17,7 +17,7 @@ export default defineConfig({
         changeOrigin: true,
       },
       // Make sure Google OAuth callback is properly proxied
-      '/api/google/callback': {
+      '/api/auth/google/callback': {
         target: 'http://localhost:3000',
         changeOrigin: true,
       }

@@ -95,3 +95,23 @@ export const disconnectGoogleAnalytics = async () => {
     throw new Error(error?.response?.data?.error || error.message);
   }
 };
+
+// Description: Handle Google OAuth callback
+// Endpoint: GET /api/auth/google/callback
+// Request: { code: string, state: string }
+// Response: { success: boolean }
+export const handleGoogleAuthCallback = async (code: string, state?: string) => {
+  try {
+    // Construct the URL with both code and state parameters
+    let url = `/api/auth/google/callback?code=${code}`;
+    if (state) {
+      url += `&state=${state}`;
+    }
+
+    const response = await api.get(url);
+    return response.data;
+  } catch (error) {
+    console.error('Google OAuth callback error:', error);
+    throw new Error(error?.response?.data?.message || error.message);
+  }
+};
